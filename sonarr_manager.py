@@ -18,16 +18,22 @@ def manage_torrents(client_config):
     for torrent in torrents:
         if torrent.is_stalled and torrent.added_date < stale_criteria:
             client.stop_torrent(torrent.id)
-            print(f"Paused Stale Torrent on {client_config['host']}: {torrent.name} (ID: {torrent.id}, Added on: {torrent.added_date.strftime('%Y-%m-%d')})")
-        elif torrent.status == 'downloading' and torrent.percent_done < 0.1 and torrent.seconds_downloading > 86400:
+            print(f"Stopped Stale Torrent on {client_config['host']}: {torrent.name} (ID: {torrent.id}, Added on: {torrent.added_date.strftime('%Y-%m-%d')})")
+        elif torrent.status == 'downloading' and torrent.percent_done < 0.1 and torrent.seconds_downloading > 7200:
             client.stop_torrent(torrent.id)
-            print(f"Paused Slow Torrent on {client_config['host']}: {torrent.name} (ID: {torrent.id}, Downloading for: {torrent.seconds_downloading} seconds)")
+            print(f"Stopped Slow Torrent on {client_config['host']}: {torrent.name} (ID: {torrent.id}, Downloading for: {torrent.seconds_downloading} seconds)")
+        elif torrent.status == 'stopped':
+            # List the name of the stopped torrents
+             print(f"Skipping Stopped Torrent on {client_config['host']}: {torrent.name} (ID: {torrent.id})")
 
     # Determine the limit for active torrents for this instance
     active_limit = client_config.get('active_limit', 10)  # Use specified limit or default to 10
 
+    # Grab torrents again
+    torrents = client.get_torrents()
+
     # Filter torrents based on specific criteria after processing for stale or slow torrents
-    active_torrents = [torrent for torrent in torrents if torrent.percent_done > 0 and (torrent.status == 'downloading' or torrent.status == 'seeding')]
+    active_torrents = [torrent for torrent in torrents if torrent.percent_done > 0 and (torrent.status == 'downloading')]
     torrents_to_start = [torrent for torrent in torrents if torrent.percent_done == 0]
 
     # If the active torrents are fewer than the active_limit, start torrents randomly that have not downloaded any data yet

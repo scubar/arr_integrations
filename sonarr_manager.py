@@ -1,53 +1,62 @@
-from transmission_rpc import Client
+import logging
 from datetime import datetime, timedelta, timezone
-import random
+from random import sample
+from transmission_rpc import Client
 from config import transmission_instances
 
-# Define the stale criteria (e.g., no progress in the last 1 day)
-stale_criteria = datetime.now(timezone.utc) - timedelta(days=1)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Constants
+STALE_DAYS = 3
+DELETE_DAYS = 7
+DOWNLOADING_SECONDS_THRESHOLD = 3600 * 24  # 24 hours in seconds
+DEFAULT_ACTIVE_LIMIT = 10
+
+def manage_torrent_status(client, torrent, delete_criteria, stale_criteria):
+    """ Manage individual torrent based on its status and criteria. """
+    if torrent.is_stalled:
+        if torrent.added_date < delete_criteria:
+            client.remove_torrent(torrent.id, delete_data=True)
+            logging.info(f"Deleted torrent {torrent.name} due to inactivity. Added date: {torrent.added_date}")
+        elif torrent.added_date < stale_criteria:
+            client.stop_torrent(torrent.id)
+            logging.info(f"Stopped stalled torrent: {torrent.name}.  Added date: {torrent.added_date}")
+    elif torrent.status == 'downloading' and torrent.percent_done < 0.1 and torrent.seconds_downloading > DOWNLOADING_SECONDS_THRESHOLD:
+        client.stop_torrent(torrent.id)
+        logging.info(f"Stopped slow downloading torrent: {torrent.name}.  Added date: {torrent.added_date}")
+
+def manage_active_torrents(client, active_limit):
+    """ Ensure the number of active torrents does not exceed the limit. """
+    torrents = client.get_torrents()
+    active_torrents = [t for t in torrents if t.percent_done > 0 and t.status == 'downloading']
+    torrents_to_start = [t for t in torrents if t.percent_done == 0]
+
+    if len(active_torrents) < active_limit:
+        to_start_count = min(active_limit - len(active_torrents), len(torrents_to_start))
+        if to_start_count > 0:
+            for torrent in sample(torrents_to_start, to_start_count):
+                client.start_torrent(torrent.id)
+                logging.info(f"Started torrent: {torrent.name}")
 
 def manage_torrents(client_config):
-    # Connect to Transmission
-    client = Client(host=client_config['host'], port=client_config['port'], 
-                    username=client_config['username'], password=client_config['password'])
+    """ Connect to the Transmission client and manage torrents based on defined criteria. """
+    try:
+        client = Client(**client_config)
+        logging.info(f"Connected to Transmission on {client_config['host']}")
+        delete_criteria = datetime.now(timezone.utc) - timedelta(days=DELETE_DAYS)
+        stale_criteria = datetime.now(timezone.utc) - timedelta(days=STALE_DAYS)
 
-    # Fetch all torrents
-    torrents = client.get_torrents()
+        torrents = client.get_torrents()
+        for torrent in torrents:
+            manage_torrent_status(client, torrent, delete_criteria, stale_criteria)
 
-    # Process stale or slow torrents first
-    for torrent in torrents:
-        if torrent.is_stalled and torrent.added_date < stale_criteria:
-            client.stop_torrent(torrent.id)
-            print(f"Stopped Stale Torrent on {client_config['host']}: {torrent.name} (ID: {torrent.id}, Added on: {torrent.added_date.strftime('%Y-%m-%d')})")
-        elif torrent.status == 'downloading' and torrent.percent_done < 0.1 and torrent.seconds_downloading > 7200:
-            client.stop_torrent(torrent.id)
-            print(f"Stopped Slow Torrent on {client_config['host']}: {torrent.name} (ID: {torrent.id}, Downloading for: {torrent.seconds_downloading} seconds)")
-        elif torrent.status == 'stopped':
-            # List the name of the stopped torrents
-             print(f"Skipping Stopped Torrent on {client_config['host']}: {torrent.name} (ID: {torrent.id})")
+        manage_active_torrents(client, client_config.get('active_limit', DEFAULT_ACTIVE_LIMIT))
 
-    # Determine the limit for active torrents for this instance
-    active_limit = client_config.get('active_limit', 10)  # Use specified limit or default to 10
-
-    # Grab torrents again
-    torrents = client.get_torrents()
-
-    # Filter torrents based on specific criteria after processing for stale or slow torrents
-    active_torrents = [torrent for torrent in torrents if torrent.percent_done > 0 and (torrent.status == 'downloading')]
-    torrents_to_start = [torrent for torrent in torrents if torrent.percent_done == 0]
-
-    # If the active torrents are fewer than the active_limit, start torrents randomly that have not downloaded any data yet
-    if len(active_torrents) < active_limit:
-        needed_torrents = active_limit - len(active_torrents)
-        if needed_torrents > len(torrents_to_start):
-            needed_torrents = len(torrents_to_start)
-        torrents_to_start_randomly = random.sample(torrents_to_start, needed_torrents)
-
-        for torrent in torrents_to_start_randomly:
-            client.start_torrent(torrent.id, True)
-            print(f"Started Torrent on {client_config['host']}: {torrent.name} (ID: {torrent.id})")
+    except Exception as e:
+        logging.error(f"Error managing torrents: {e}")
 
 if __name__ == "__main__":
     for instance in transmission_instances:
-        print(f"Processing {instance['host']}")
+        logging.info(f"Processing {instance['host']}")
         manage_torrents(instance)

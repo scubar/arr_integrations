@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 STALE_DAYS = 3
 DELETE_DAYS = 7
 DOWNLOADING_SECONDS_THRESHOLD = 3600 * 24  # 24 hours in seconds
-DEFAULT_ACTIVE_LIMIT = 10
+DEFAULT_ACTIVE_LIMIT = 300
 
 def manage_torrent_status(client, torrent, delete_criteria, stale_criteria):
     """ Manage individual torrent based on its status and criteria. """
